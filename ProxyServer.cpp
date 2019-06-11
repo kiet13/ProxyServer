@@ -181,6 +181,7 @@ DWORD WINAPI threadProc(void* param)
 		}
 
 		proxyRecv.Send((char*)htmlContent, i, 0);
+		cout << clientRequest << endl;
 		proxyRecv.Close();
 		return 0;
 	}
@@ -219,7 +220,7 @@ DWORD WINAPI threadProc(void* param)
 		perror("Could not connect");
 		exit(1);
 	}
-	proxyClient.Send((char*)tempRequest.c_str(), BUFSIZE, 0);
+	//proxyClient.Send((char*)tempRequest.c_str(), BUFSIZE, 0);
 	
 	if (strcmp(method, "POST") == 0)
 	{
@@ -274,16 +275,18 @@ DWORD WINAPI threadProc(void* param)
 					proxyClient.Send((unsigned char*)chunkDataInFile, readBytes, 0);
 				}
 			}
-			else
-			{
+			
 				unsigned char bodyRequest[BUFSIZE + 1];
 				memset((char*)bodyRequest, 0, BUFSIZE + 1);
 				proxyRecv.Accept(client->mainClient);
+
+				// Sua content-type thanh multipart/form-data
 				proxyRecv.Receive((unsigned char*)bodyRequest, contentLen, 0);
 
 				unsigned char fullRequest[BUFSIZE + 1];
 				memset((char*)fullRequest, 0, BUFSIZE + 1);
 
+				// Ghép header va body li
 				int sizeHeader = tempRequest.size();
 				for (int i = 0; i < sizeHeader; i++)
 				{
@@ -294,8 +297,9 @@ DWORD WINAPI threadProc(void* param)
 					fullRequest[sizeHeader + i] = bodyRequest[i];
 				}
 				
+				cout << fullRequest << endl;
 				proxyClient.Send((unsigned char*)fullRequest, sizeHeader + contentLen, 0);
-			}
+		
 		}
 
 	}
