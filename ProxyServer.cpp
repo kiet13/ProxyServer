@@ -331,6 +331,8 @@ DWORD WINAPI threadProc(void* param)
 			proxyClient.Send((unsigned char*)fullRequest, sizeRequest, 0);
 			delete[]fullRequest;
 		}
+		else
+			proxyClient.Send((char*)tempRequest.c_str(), BUFSIZE, 0);
 	}
 	else
 		proxyClient.Send((char*)tempRequest.c_str(), BUFSIZE, 0);
@@ -341,7 +343,7 @@ DWORD WINAPI threadProc(void* param)
 		// Nhan du lieu tu web server
 		char data[BUFSIZE + 1];
 		memset((char*)data, 0, BUFSIZE + 1);
-		int lenData;
+		int lenData = 0;
 		if ((lenData = proxyClient.Receive(data, BUFSIZE)) > 0)
 			proxyRecv.Send((char*)data, lenData, 0); // Tra du lieu ve client that
 		else
