@@ -12,6 +12,7 @@
 #include <sstream>
 
 #define BUFSIZE 4096
+#define MAXSIZE 131072
 #define PORT 8888
 
 using namespace std;
@@ -76,13 +77,6 @@ bool isInBlackList(char* hostname, vector<string> blacklist)
 	return false;
 }
 
-// Ref: https://stackoverflow.com/questions/2390912/checking-for-an-empty-file-in-c
-bool isEmpty(fstream& pFile)
-{
-	return pFile.peek() == fstream::traits_type::eof();
-}
-
-
 //Đổi 1.1 thành 1.0 và connect
 void http_change(char request[]) {
 	//Sửa 1.1 thành 1.0
@@ -90,7 +84,7 @@ void http_change(char request[]) {
 	int pos_http = 0;
 	pos_http = temp.find("HTTP/1.") + 7;
 	temp[pos_http] = '0';
-	
+
 	pos_http = temp.find("Proxy-Connection:") + 18;
 	// xoa dong keep-alive
 	temp.erase(temp.begin() + pos_http, temp.begin() + pos_http + 10);
@@ -110,13 +104,13 @@ DWORD WINAPI threadProc(void* param)
 	proxyRecv.Attach(client->connected);
 
 	// Proxy nhan request tu client va luu vao clientRequest
-	char clientRequest[BUFSIZE + 1];
+	unsigned char clientRequest[BUFSIZE + 1];
 	memset((char*)clientRequest, 0, BUFSIZE + 1);
 
 	// proxy nhận phần header
-	int readBytes = proxyRecv.Receive((char*)clientRequest, BUFSIZE, 0);
+	int readBytes = proxyRecv.Receive((unsigned char*)clientRequest, BUFSIZE, 0);
 	//http_change(clientRequest);
-	if (clientRequest == NULL || strcmp(clientRequest, "") == 0)
+	if (clientRequest == NULL || strcmp((char*)clientRequest, "") == 0)
 	{
 		proxyRecv.Close();
 		return 0;
@@ -124,7 +118,7 @@ DWORD WINAPI threadProc(void* param)
 
 	// Lay dong dau tien cua request ra de tach URL
 	char temp[BUFSIZE + 1];
-	strcpy(temp, clientRequest);
+	strncpy(temp, (char*)clientRequest, BUFSIZE + 1);
 	char* firstLine = strtok(temp, "\n");
 
 	// Tach method va URL tu dong dau tien
@@ -135,6 +129,7 @@ DWORD WINAPI threadProc(void* param)
 		return 0;
 
 	// Tach URL
+
 	char* URL = strtok(NULL, " ");
 	vector<string> path;
 	int count = 0;
@@ -185,7 +180,7 @@ DWORD WINAPI threadProc(void* param)
 		proxyRecv.Close();
 		return 0;
 	}
-		
+
 
 	// Lay dia chi IP tu host name
 	char* ip = get_ip(hostname);
@@ -197,7 +192,7 @@ DWORD WINAPI threadProc(void* param)
 		tempURL = tempURL + "/" + path[i];
 
 	// Kiem tra xem url co subpath hay khong
-	string tempRequest(clientRequest);
+	string tempRequest((char*)clientRequest);
 	int sizeHostName = strlen(hostname);
 	if (!((path.size() > 3 && path[3] == "") || path.size() <= 3)) // Neu khong co subpath
 	{
@@ -220,16 +215,15 @@ DWORD WINAPI threadProc(void* param)
 		perror("Could not connect");
 		exit(1);
 	}
-	//proxyClient.Send((char*)tempRequest.c_str(), BUFSIZE, 0);
-	
+
 	if (strcmp(method, "POST") == 0)
 	{
 		// Doc content-length
 		// Doc dong thu 4
-		string lines(clientRequest);
+		string lines((char*)clientRequest);
 		stringstream s(lines);
 
-		string contentLength;
+		string contentLength = "";
 
 		while (1)
 		{
@@ -257,53 +251,91 @@ DWORD WINAPI threadProc(void* param)
 			}
 		}
 
+
 		if (contentType != "application/x-www-form-urlencoded")
 		{
-
 			int contentLen = stoi(contentLength);
-			// Neu nhu phan body cua POST request qua lon thi thuc hien luu vao file
-			if (contentLen > BUFSIZE)
-			{
-				while (1)
-				{
-					proxyRecv.Accept(client->mainClient);
-					unsigned char chunkDataInFile[BUFSIZE + 1];
-					memset((char*)chunkDataInFile, 0, BUFSIZE + 1);
-					readBytes = proxyRecv.Receive((unsigned char*)chunkDataInFile, BUFSIZE, 0);
-					if (readBytes <= 0)
-						break;
-					proxyClient.Send((unsigned char*)chunkDataInFile, readBytes, 0);
-				}
-			}
+			unsigned char firstRequest[BUFSIZE + 1];
+			memset((char*)firstRequest, 0, BUFSIZE + 1);
+			int startHostName = 3;
 			
+
+			while (1)
+			{
+				if (clientRequest[startHostName] == ' ')
+					break;
+				else
+					startHostName++;
+			}
+			startHostName++;
+
+			int endHostName = startHostName + 8;
+			while (1)
+			{
+				if (clientRequest[endHostName] == '/')
+					break;
+				else
+					endHostName++;
+			}
+
+			// Xoa phan hostname trong clientRequest
+			int j = 0;
+			for (int i = 0; i < startHostName; i++)
+			{
+				firstRequest[j] = clientRequest[i];
+				j++;
+			}
+
+			for (int i = endHostName; i < readBytes; i++)
+			{
+				firstRequest[j] = clientRequest[i];
+				j++;
+			}
+			readBytes = j;
+			
+			// Neu file > 127KB thi thoat 
+			if (contentLen > MAXSIZE - 1024)
+			{
+				cout << "File size is too large!!!" << endl;
+				return 0;
+			}
+			unsigned char* fullRequest = new unsigned char[MAXSIZE + 1];
+			memset((char*)fullRequest, 0, MAXSIZE + 1);
+
+			int firstBytes = readBytes;
+			int sizeRequest = firstBytes;
+			for (int i = 0; i < firstBytes; i++)
+			{
+				fullRequest[i] = firstRequest[i];
+			}
+
+			int sizeHeader = tempRequest.find("\r\n\r\n") + 4;
+
+			while (sizeRequest < contentLen)
+			{
+				proxyRecv.Accept(client->mainClient);
 				unsigned char bodyRequest[BUFSIZE + 1];
 				memset((char*)bodyRequest, 0, BUFSIZE + 1);
-				proxyRecv.Accept(client->mainClient);
+				if (contentLen + sizeHeader - sizeRequest >= BUFSIZE)
+					readBytes = proxyRecv.Receive((unsigned char*)bodyRequest, BUFSIZE, 0);
+				else
+					readBytes = proxyRecv.Receive((unsigned char*)bodyRequest, contentLen + sizeHeader - sizeRequest, 0);
 
-				// Sua content-type thanh multipart/form-data
-				proxyRecv.Receive((unsigned char*)bodyRequest, contentLen, 0);
+				// Ghep cac phan cua body lai voi phan header
+				for (int i = 0; i < readBytes; i++)
+					fullRequest[sizeRequest + i] = bodyRequest[i];
+				sizeRequest += readBytes;
+			}
 
-				unsigned char fullRequest[BUFSIZE + 1];
-				memset((char*)fullRequest, 0, BUFSIZE + 1);
-
-				// Ghép header va body li
-				int sizeHeader = tempRequest.size();
-				for (int i = 0; i < sizeHeader; i++)
-				{
-					fullRequest[i] = tempRequest[i];
-				}
-				for (int i = 0; i < contentLen; i++)
-				{
-					fullRequest[sizeHeader + i] = bodyRequest[i];
-				}
-				
-				cout << fullRequest << endl;
-				proxyClient.Send((unsigned char*)fullRequest, sizeHeader + contentLen, 0);
-		
+			cout << fullRequest << endl;
+			proxyClient.Send((unsigned char*)fullRequest, sizeRequest, 0);
+			delete[]fullRequest;
 		}
-
 	}
-	
+	else
+		proxyClient.Send((char*)tempRequest.c_str(), BUFSIZE, 0);
+		
+
 	while (1)
 	{
 		// Nhan du lieu tu web server
@@ -324,22 +356,22 @@ DWORD WINAPI threadProc(void* param)
 
 int main()
 {
-    int nRetCode = 0;
+	int nRetCode = 0;
 
-    HMODULE hModule = ::GetModuleHandle(nullptr);
+	HMODULE hModule = ::GetModuleHandle(nullptr);
 
-    if (hModule != nullptr)
-    {
-        // initialize MFC and print and error on failure
-        if (!AfxWinInit(hModule, nullptr, ::GetCommandLine(), 0))
-        {
-            // TODO: code your application's behavior here.
-            wprintf(L"Fatal Error: MFC initialization failed\n");
-            nRetCode = 1;
-        }
-        else
-        {
-            // TODO: code your application's behavior here.
+	if (hModule != nullptr)
+	{
+		// initialize MFC and print and error on failure
+		if (!AfxWinInit(hModule, nullptr, ::GetCommandLine(), 0))
+		{
+			// TODO: code your application's behavior here.
+			wprintf(L"Fatal Error: MFC initialization failed\n");
+			nRetCode = 1;
+		}
+		else
+		{
+			// TODO: code your application's behavior here.
 			AfxSocketInit(NULL);
 
 			CSocket proxyServer;
@@ -360,14 +392,14 @@ int main()
 					CreateThread(0, 0, (LPTHREAD_START_ROUTINE)&threadProc, user, 0, 0);
 				}
 			}
-        }
-    }
-    else
-    {
-        // TODO: change error code to suit your needs
-        wprintf(L"Fatal Error: GetModuleHandle failed\n");
-        nRetCode = 1;
-    }
+		}
+	}
+	else
+	{
+		// TODO: change error code to suit your needs
+		wprintf(L"Fatal Error: GetModuleHandle failed\n");
+		nRetCode = 1;
+	}
 
-    return nRetCode;
+	return nRetCode;
 }
